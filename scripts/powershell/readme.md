@@ -1,0 +1,1 @@
+if you don't want to copy-paste into power shell(should work i don't know)
