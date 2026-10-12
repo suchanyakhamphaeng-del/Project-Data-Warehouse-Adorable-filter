@@ -1,0 +1,20 @@
+# ===================================================================
+#  dbt profile - อ่านค่าการเชื่อมต่อจาก environment variable ทั้งหมด
+#  ค่าถูกส่งเข้ามาจาก docker-compose.yml (ซึ่งอ่านจาก .env)
+#  ไม่มีรหัสผ่าน hard-code อยู่ในไฟล์นี้
+# ===================================================================
+my_dbt_project:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DBT_HOST', 'dw_postgres') }}"
+      port: "{{ env_var('DBT_PORT', '5432') | int }}"
+      user: "{{ env_var('DBT_USER') }}"
+      password: "{{ env_var('DBT_PASSWORD') }}"
+      dbname: "{{ env_var('DBT_DBNAME', 'dw') }}"
+      schema: "{{ env_var('DBT_SCHEMA', 'staging') }}"
+      threads: "{{ env_var('DBT_THREADS', '4') | int }}"
+      keepalives_idle: 0
+      connect_timeout: 10
+      sslmode: prefer

@@ -1,0 +1,31 @@
+# ===================================================================
+#  dbt project ของ DW stack
+#  รันผ่าน Airflow ด้วย dbt ที่อยู่ใน venv แยก: /opt/dbt_venv/bin/dbt
+# ===================================================================
+name: "my_dbt_project"
+version: "1.0.0"
+config-version: 2
+
+# ชื่อ profile ต้องตรงกับ key ใน profiles.yml
+profile: "my_dbt_project"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+analysis-paths: ["analyses"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+seeds:
+  my_dbt_project:
+    # seed ทั้งหมดลงที่ schema เดียวกับ target (ค่า default = staging)
+    +quote_columns: false
+    +full_refresh: true
+
+models:
+  my_dbt_project:
+    +materialized: view

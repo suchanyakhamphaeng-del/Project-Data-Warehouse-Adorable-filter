@@ -1,0 +1,254 @@
+# ===================================================================
+#  Data Warehouse stack : PostgreSQL 16 + Airflow 2.10 + dbt
+#                         + Metabase + pgAdmin
+#  รหัสผ่านและคีย์ทั้งหมดอ่านจากไฟล์ .env (ดู .env.example)
+# ===================================================================
+
+# ตั้งชื่อ compose project ไว้ชัดเจน กัน container/volume ไปชนกับ stack อื่น
+# ที่อาจมีอยู่ในเครื่องแล้ว (เช่น lab-week01, dbt_project_temp)
+name: dw_stack
+
+# ---------- ค่า environment ที่ Airflow ทุก service ใช้ร่วมกัน ----------
+x-airflow-common: &airflow-common
+  build:
+    context: ./airflow
+    args:
+      AIRFLOW_IMAGE_NAME: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.10.5-python3.11}
+  image: dw-airflow:2.10.5
+  environment: &airflow-common-env
+    # --- core ---
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: ${AIRFLOW_TIMEZONE:-Asia/Bangkok}
+    # --- metadata database (database `airflow` บน Postgres ตัวเดียวกัน) ---
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@dw_postgres:5432/${AIRFLOW_DB:-airflow}
+    # --- webserver ---
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+    AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: ${AIRFLOW_TIMEZONE:-Asia/Bangkok}
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    # --- scheduler ---
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+
+    # --- Airflow connection ของ warehouse (ตั้งผ่าน env var ไม่ต้องกดใน UI) ---
+    AIRFLOW_CONN_DW_POSTGRES: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@dw_postgres:5432/${POSTGRES_DB:-dw}
+
+    # --- ค่าที่ profiles.yml ของ dbt อ่านไปใช้ ---
+    DBT_PROFILES_DIR: /opt/airflow/my_dbt_project
+    DBT_PROJECT_DIR: /opt/airflow/my_dbt_project
+    DBT_HOST: dw_postgres
+    DBT_PORT: "5432"
+    DBT_USER: ${POSTGRES_USER}
+    DBT_PASSWORD: ${POSTGRES_PASSWORD}
+    DBT_DBNAME: ${POSTGRES_DB:-dw}
+    DBT_SCHEMA: staging
+    DBT_THREADS: "4"
+    # เขียน target/ และ log ของ dbt ลง /tmp ใน container
+    # กัน permission error บน bind mount ของ Windows
+    DBT_TARGET_PATH: /tmp/dbt/target
+    DBT_LOG_PATH: /tmp/dbt/logs
+    # path ของ dbt ที่อยู่ใน venv แยก (ใช้ใน DAG)
+    DBT_BIN: /opt/dbt_venv/bin/dbt
+    # โฟลเดอร์ SQL ที่ DAG เรียกใช้ (เช่น DDL ของชั้น raw)
+    SQL_DIR: /opt/airflow/sql
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./my_dbt_project:/opt/airflow/my_dbt_project
+    - ./sql:/opt/airflow/sql:ro
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    dw_postgres:
+      condition: service_healthy
+
+services:
+  # =================================================================
+  #  PostgreSQL 16 - ทำหน้าที่เป็น warehouse (database `dw`)
+  #  และเก็บ metadata ของ Airflow / Metabase ด้วย
+  # =================================================================
+  dw_postgres:
+    image: postgres:16
+    container_name: dw_stack_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-dw}
+      # ตัวแปรเพิ่มเติมที่สคริปต์ใน postgres/init/ เอาไปใช้
+      AIRFLOW_DB: ${AIRFLOW_DB:-airflow}
+      METABASE_DB: ${METABASE_DB:-metabase}
+      DW_SCHEMAS: ${DW_SCHEMAS:-raw staging marts}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - dw_postgres_data:/var/lib/postgresql/data
+      # สคริปต์จะรันเฉพาะตอน initialize volume ครั้งแรกเท่านั้น
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      # DDL ของชั้น raw เก็บไว้ที่ sql/ เป็น single source of truth
+      # สคริปต์ 03_create_raw_tables.sh ใน initdb.d จะ psql -f ไฟล์จาก /opt/sql
+      # (mount ไฟล์ซ้อนเข้า initdb.d ตรง ๆ ไม่ได้ เพราะ dir นั้น mount แบบ :ro)
+      - ./sql:/opt/sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - dw_net
+
+  # =================================================================
+  #  Airflow - init (db migrate + สร้าง admin user) รันครั้งเดียวแล้วจบ
+  # =================================================================
+  airflow-init:
+    <<: *airflow-common
+    container_name: dw_stack_airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        echo ">>> airflow db migrate"
+        airflow db migrate
+        echo ">>> create admin user (skip if already exists)"
+        airflow users create \
+          --username "$${AIRFLOW_ADMIN_USERNAME}" \
+          --password "$${AIRFLOW_ADMIN_PASSWORD}" \
+          --firstname "$${AIRFLOW_ADMIN_FIRSTNAME}" \
+          --lastname "$${AIRFLOW_ADMIN_LASTNAME}" \
+          --role Admin \
+          --email "$${AIRFLOW_ADMIN_EMAIL}" \
+          || echo "admin user already exists - skipped"
+        echo ">>> airflow-init done"
+    environment:
+      <<: *airflow-common-env
+      AIRFLOW_ADMIN_USERNAME: ${AIRFLOW_ADMIN_USERNAME:-admin}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      AIRFLOW_ADMIN_FIRSTNAME: ${AIRFLOW_ADMIN_FIRSTNAME:-Data}
+      AIRFLOW_ADMIN_LASTNAME: ${AIRFLOW_ADMIN_LASTNAME:-Admin}
+      AIRFLOW_ADMIN_EMAIL: ${AIRFLOW_ADMIN_EMAIL:-admin@example.com}
+    restart: on-failure
+    networks:
+      - dw_net
+
+  # =================================================================
+  #  Airflow - webserver (UI port 8080)
+  # =================================================================
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: dw_stack_airflow_webserver
+    command: webserver
+    ports:
+      - "${AIRFLOW_WEBSERVER_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    restart: unless-stopped
+    depends_on:
+      dw_postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - dw_net
+
+  # =================================================================
+  #  Airflow - scheduler (LocalExecutor รัน task ในตัวเอง)
+  # =================================================================
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: dw_stack_airflow_scheduler
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:8974/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    restart: unless-stopped
+    depends_on:
+      dw_postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - dw_net
+
+  # =================================================================
+  #  Metabase - BI / dashboard (port 3000)
+  #  เก็บ application data ใน database `metabase` บน dw_postgres
+  # =================================================================
+  dw_metabase:
+    image: metabase/metabase:latest
+    container_name: dw_stack_metabase
+    restart: unless-stopped
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: dw_postgres
+      MB_DB_PORT: "5432"
+      MB_DB_DBNAME: ${METABASE_DB:-metabase}
+      MB_DB_USER: ${POSTGRES_USER}
+      MB_DB_PASS: ${POSTGRES_PASSWORD}
+      JAVA_TIMEZONE: ${AIRFLOW_TIMEZONE:-Asia/Bangkok}
+    ports:
+      - "${METABASE_PORT:-3000}:3000"
+    volumes:
+      - dw_metabase_data:/plugins
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:3000/api/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      start_period: 150s
+    depends_on:
+      dw_postgres:
+        condition: service_healthy
+    networks:
+      - dw_net
+
+  # =================================================================
+  #  pgAdmin 4 - ดู/แก้ข้อมูลใน warehouse (port 5050)
+  #  server ของ warehouse ถูกลงทะเบียนไว้แล้วผ่าน servers.json
+  # =================================================================
+  dw_pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: dw_stack_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: "True"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_LISTEN_PORT: "80"
+      # จำนวนครั้งที่ใส่รหัสผิดได้ก่อนบัญชีถูกล็อก
+      # 0 = ปิดการล็อกบัญชี (เหมาะกับ dev บนเครื่องตัวเอง)
+      PGADMIN_CONFIG_MAX_LOGIN_ATTEMPTS: ${PGADMIN_MAX_LOGIN_ATTEMPTS:-0}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - dw_pgadmin_data:/var/lib/pgadmin
+      # ลงทะเบียน server ของ warehouse อัตโนมัติตอนรันครั้งแรก
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      dw_postgres:
+        condition: service_healthy
+    networks:
+      - dw_net
+
+networks:
+  dw_net:
+    name: dw_stack_net
+    driver: bridge
+
+volumes:
+  dw_postgres_data:
+    name: dw_stack_postgres_data
+  dw_metabase_data:
+    name: dw_stack_metabase_data
+  dw_pgadmin_data:
+    name: dw_stack_pgadmin_data

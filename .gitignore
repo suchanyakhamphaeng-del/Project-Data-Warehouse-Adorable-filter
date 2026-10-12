@@ -1,0 +1,21 @@
+# secrets
+.env
+
+# airflow
+logs/*
+!logs/.gitkeep
+plugins/*
+!plugins/.gitkeep
+airflow.cfg
+airflow.db
+webserver_config.py
+
+# dbt
+my_dbt_project/target/
+my_dbt_project/dbt_packages/
+my_dbt_project/logs/
+.user.yml
+
+# python
+__pycache__/
+*.py[cod]

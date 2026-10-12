@@ -1,0 +1,46 @@
+version: 2
+
+seeds:
+  - name: promotions
+    description: "Promotion discount percentages lookup"
+    config:
+      column_types:
+        promotion_id: integer
+        discount: integer
+    columns:
+      - name: promotion_id
+        description: "Primary key for promotions"
+        tests:
+          - unique
+          - not_null
+      - name: discount
+        description: "Percentage discount"
+        tests:
+          - not_null
+
+  - name: stores
+    description: "Store location cities lookup"
+    config:
+      column_types:
+        store_id: integer
+        city: varchar(100)
+    columns:
+      - name: store_id
+        description: "Primary key for store location"
+        tests:
+          - unique
+          - not_null
+      - name: city
+        tests:
+          - not_null
+
+  - name: categories
+    config:
+      column_types:
+        category_id: integer
+        category_name: varchar(100)
+    columns:
+      - name: category_id
+        tests:
+          - unique
+          - not_null
