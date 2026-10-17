@@ -10,13 +10,16 @@ seeds:
     columns:
       - name: promotion_id
         description: "Primary key for promotions"
-        tests:
+        data_tests:
           - unique
           - not_null
       - name: discount
-        description: "Percentage discount"
-        tests:
+        description: "Percentage discount (0-100)"
+        data_tests:
           - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
 
   - name: stores
     description: "Store location cities lookup"
@@ -26,21 +29,45 @@ seeds:
         city: varchar(100)
     columns:
       - name: store_id
-        description: "Primary key for store location"
-        tests:
+        description: "Primary key for stores"
+        data_tests:
           - unique
           - not_null
       - name: city
-        tests:
+        description: "City where the store is located"
+        data_tests:
           - not_null
 
   - name: categories
+    description: "Product category lookup"
     config:
       column_types:
         category_id: integer
         category_name: varchar(100)
     columns:
       - name: category_id
-        tests:
+        description: "Primary key for categories"
+        data_tests:
           - unique
+          - not_null
+      - name: category_name
+        description: "Category display name"
+        data_tests:
+          - not_null
+
+  - name: suppliers
+    description: "Supplier country lookup"
+    config:
+      column_types:
+        supplier_id: integer
+        country: varchar(100)
+    columns:
+      - name: supplier_id
+        description: "Primary key for suppliers"
+        data_tests:
+          - unique
+          - not_null
+      - name: country
+        description: "Country where the supplier is based"
+        data_tests:
           - not_null
