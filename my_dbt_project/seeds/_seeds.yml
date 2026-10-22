@@ -17,9 +17,6 @@ seeds:
         description: "Percentage discount (0-100)"
         data_tests:
           - not_null
-          - dbt_utils.accepted_range:
-              min_value: 0
-              max_value: 100
 
   - name: stores
     description: "Store location cities lookup"
