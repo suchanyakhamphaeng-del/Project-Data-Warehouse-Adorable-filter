@@ -1,0 +1,15 @@
+version: 2
+ 
+sources:
+  - name: raw
+    description: "Raw landing zone, loaded from CSV with \\copy (see scripts/)"
+    schema: raw
+    tables:
+      - name: orders
+      - name: order_items
+      - name: payments
+      - name: shipments
+      - name: returns
+      - name: customers
+      - name: products
+      - name: employees
