@@ -17,12 +17,10 @@ ARG COSMOS_VERSION=1.15.1
 # ---------- ส่วนที่ต้องใช้สิทธิ์ root ----------
 USER root
 
-RUN apt-get update \
+RUN echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4 \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
-        build-essential \
-        libpq-dev \
         git \
-        curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
