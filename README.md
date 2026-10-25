@@ -216,7 +216,7 @@ docker compose exec dw_postgres psql -U dw_user -d dw -c "SELECT city, store_cou
 เท่ากับชั้น `raw` — ตรวจทีเดียวทั้งสองชั้นได้ด้วย
 
 ```powershell
-docker compose exec dw_postgres psql -U dw_user -d dw -c "SELECT 'raw.stores' t, COUNT(*) FROM raw.stores UNION ALL SELECT 'raw.promotions', COUNT(*) FROM raw.promotions UNION ALL SELECT 'raw.categories', COUNT(*) FROM raw.categories UNION ALL SELECT 'staging.stores', COUNT(*) FROM staging.stores ORDER BY 1;"
+docker compose exec dw_postgres psql -U dw_user -d dw -c "SELECT 'staging.categories' t, COUNT(*) FROM staging.categories UNION ALL SELECT 'staging.promotions', COUNT(*) FROM staging.promotions UNION ALL SELECT 'staging.stores', COUNT(*) FROM staging.stores UNION ALL SELECT 'staging.suppliers', COUNT(*) FROM staging.suppliers ORDER BY 1;"
 ```
 
 ### รัน DDL ของชั้น raw ด้วยมือ
