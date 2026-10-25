@@ -48,16 +48,24 @@ x-airflow-common: &airflow-common
     # กัน permission error บน bind mount ของ Windows
     DBT_TARGET_PATH: /tmp/dbt/target
     DBT_LOG_PATH: /tmp/dbt/logs
+    # --- Cosmos ---
+    # ปิด DatasetAlias ของ Cosmos: บน Airflow 2.10 ทำให้ `airflow dags test`
+    # พังด้วย FlushError (DatasetModel.aliases) และโปรเจกต์ไม่ได้ใช้ Datasets
+    AIRFLOW__COSMOS__ENABLE_DATASET_ALIAS: "False"
     # path ของ dbt ที่อยู่ใน venv แยก (ใช้ใน DAG)
     DBT_BIN: /opt/dbt_venv/bin/dbt
     # โฟลเดอร์ SQL ที่ DAG เรียกใช้ (เช่น DDL ของชั้น raw)
     SQL_DIR: /opt/airflow/sql
+    # โฟลเดอร์ CSV ของชั้น raw (ใช้ใน task load_raw_from_csv)
+    RAW_DATA_DIR: /opt/airflow/raw_data
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ./my_dbt_project:/opt/airflow/my_dbt_project
-    - ./sql:/opt/airflow/sql:ro
+    - ./scripts/sql:/opt/airflow/sql:ro
+    # CSV ต้นทางของชั้น raw ให้ DAG โหลดเข้า warehouse เอง
+    - ./raw_data:/opt/airflow/raw_data:ro
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     dw_postgres:
@@ -86,10 +94,10 @@ services:
       - dw_postgres_data:/var/lib/postgresql/data
       # สคริปต์จะรันเฉพาะตอน initialize volume ครั้งแรกเท่านั้น
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
-      # DDL ของชั้น raw เก็บไว้ที่ sql/ เป็น single source of truth
+      # DDL ของชั้น raw เก็บไว้ที่ scripts/sql/ เป็น single source of truth
       # สคริปต์ 03_create_raw_tables.sh ใน initdb.d จะ psql -f ไฟล์จาก /opt/sql
       # (mount ไฟล์ซ้อนเข้า initdb.d ตรง ๆ ไม่ได้ เพราะ dir นั้น mount แบบ :ro)
-      - ./sql:/opt/sql:ro
+      - ./scripts/sql:/opt/sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s

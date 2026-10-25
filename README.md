@@ -28,7 +28,7 @@ DW/
 │   ├── database_design.md          # schema 3 ชั้น + ทุกตาราง + ERD (Mermaid)
 │   └── naming_conventions.md       # มาตรฐานชื่อ schema/ตาราง/คอลัมน์/ไฟล์
 │
-├── sql/
+├── scripts/sql/
 │   └── create_raw_tables.sql       # DDL ชั้น raw (idempotent, มี COMMENT)
 │                                   #   single source of truth — เรียกใช้ทั้งจาก
 │                                   #   init script 03 และจาก DAG
@@ -47,7 +47,7 @@ DW/
 │   └── servers.json                # ลงทะเบียน server ของ warehouse ให้อัตโนมัติ
 │
 ├── dags/
-│   └── dw_sample_pipeline.py       # DAG ตัวอย่าง (6 task, raw → staging → marts)
+│   └── dw_pipeline.py              # DAG หลัก: raw → dbt ผ่าน Cosmos (ดู README_Airflow.md)
 │
 ├── logs/                           # log ของ Airflow (mount จาก host)
 ├── plugins/                        # plugin ของ Airflow (mount จาก host)
@@ -64,7 +64,7 @@ DW/
     ├── macros/ · tests/ · analyses/ · snapshots/
 ```
 
-> **ไฟล์ DDL มีต้นฉบับเดียว** — `sql/create_raw_tables.sql` ถูก mount เข้าคอนเทนเนอร์
+> **ไฟล์ DDL มีต้นฉบับเดียว** — `scripts/sql/create_raw_tables.sql` ถูก mount เข้าคอนเทนเนอร์
 > Postgres ที่ `/opt/sql/` แล้วสคริปต์ `postgres/init/03_create_raw_tables.sh` เป็นตัว
 > เรียก `psql -f` ให้ตอน init ครั้งแรก (ลำดับ 03 = หลังสร้าง database และ schema)
 > ส่วน Airflow mount ไฟล์เดียวกันที่ `/opt/airflow/sql/` ให้ task `create_raw_tables`
@@ -179,28 +179,21 @@ docker compose exec dw_postgres psql -U dw_user -d dw -c "\dn"
 
 ---
 
-## 5. DAG ตัวอย่าง `dw_sample_pipeline`
+## 5. DAG `dw_pipeline` (Airflow + Cosmos)
 
 ```
-check_warehouse → create_raw_tables → load_raw_from_csv
-                → dbt_seed → dbt_test → build_fct_store_city_summary
+check_warehouse → create_raw_tables → load_raw_from_csv → audit_raw_row_counts
+                → dbt (Cosmos DbtTaskGroup: seed → stg_* → tests → marts)
 ```
 
-| # | Task | สิ่งที่ทำ |
-| :-: | --- | --- |
-| 1 | `check_warehouse` | ต่อ warehouse ผ่าน Airflow connection `dw_postgres`, log version/schema และสร้าง schema (`raw`/`staging`/`marts`) ที่หายไปให้ |
-| 2 | `create_raw_tables` | รัน `sql/create_raw_tables.sql` สร้าง `raw.stores`, `raw.promotions`, `raw.categories` — รันซ้ำได้ ไม่พังถ้ามีอยู่แล้ว |
-| 3 | `load_raw_from_csv` | `TRUNCATE` แล้ว `COPY` ไฟล์ CSV จาก `seeds/` เข้า `raw.*` ทั้งหมดในทรานแซกชันเดียว (ถ้าพลาดจะ rollback) |
-| 4 | `dbt_seed` | `dbt seed --full-refresh` → โหลด `stores`, `promotions`, `categories` เข้า schema `staging` พร้อม cast ชนิดข้อมูล |
-| 5 | `dbt_test` | รัน test ที่ประกาศใน `seeds/_seeds.yml` (`unique`, `not_null`) |
-| 6 | `build_fct_store_city_summary` | สร้างตาราง `marts.fct_store_city_summary` = จำนวนสาขาต่อเมืองจาก `staging.stores` |
+รายละเอียด config ของ Cosmos และผลการทดสอบอยู่ที่ **`README_Airflow.md`**
 
 สั่งรัน — จาก UI ให้เปิด <http://localhost:8080> → เปิดสวิตช์ของ DAG → กด ▶ Trigger
 หรือจาก command line
 
 ```powershell
-docker compose exec airflow-scheduler airflow dags unpause dw_sample_pipeline
-docker compose exec airflow-scheduler airflow dags trigger dw_sample_pipeline
+docker compose exec airflow-scheduler airflow dags unpause dw_pipeline
+docker compose exec airflow-scheduler airflow dags trigger dw_pipeline
 ```
 
 ดูผลลัพธ์
@@ -223,7 +216,7 @@ docker compose exec dw_postgres psql -U dw_user -d dw -c "SELECT city, store_cou
 เท่ากับชั้น `raw` — ตรวจทีเดียวทั้งสองชั้นได้ด้วย
 
 ```powershell
-docker compose exec dw_postgres psql -U dw_user -d dw -c "SELECT 'raw.stores' t, COUNT(*) FROM raw.stores UNION ALL SELECT 'raw.promotions', COUNT(*) FROM raw.promotions UNION ALL SELECT 'raw.categories', COUNT(*) FROM raw.categories UNION ALL SELECT 'staging.stores', COUNT(*) FROM staging.stores ORDER BY 1;"
+docker compose exec dw_postgres psql -U dw_user -d dw -c "SELECT 'staging.categories' t, COUNT(*) FROM staging.categories UNION ALL SELECT 'staging.promotions', COUNT(*) FROM staging.promotions UNION ALL SELECT 'staging.stores', COUNT(*) FROM staging.stores UNION ALL SELECT 'staging.suppliers', COUNT(*) FROM staging.suppliers ORDER BY 1;"
 ```
 
 ### รัน DDL ของชั้น raw ด้วยมือ
@@ -308,7 +301,7 @@ docker compose up -d --build
 ```
 
 **แต่ DDL ของชั้น `raw` ไม่ต้อง `down -v`** — task `create_raw_tables` ใน DAG รัน
-`sql/create_raw_tables.sql` ให้ทุกรอบและไฟล์เป็น idempotent ฉะนั้นถ้าแก้ DDL แค่
+`scripts/sql/create_raw_tables.sql` ให้ทุกรอบและไฟล์เป็น idempotent ฉะนั้นถ้าแก้ DDL แค่
 trigger DAG ใหม่ก็พอ (หรือรัน `psql -f /opt/sql/create_raw_tables.sql` ด้วยมือ)
 ส่วนที่ต้อง `down -v` จริง ๆ คือการเปลี่ยนรายชื่อ `DW_SCHEMAS`, ชื่อ/รหัสผ่าน Postgres
 หรือสคริปต์ `01_`/`02_`
@@ -409,7 +402,7 @@ docker compose exec dw_postgres psql -U dw_user -d dw   # เข้า psql
 
 # Airflow CLI
 docker compose exec airflow-scheduler airflow dags list
-docker compose exec airflow-scheduler airflow dags trigger dw_sample_pipeline
-docker compose exec airflow-scheduler airflow tasks list dw_sample_pipeline
+docker compose exec airflow-scheduler airflow dags trigger dw_pipeline
+docker compose exec airflow-scheduler airflow tasks list dw_pipeline
 docker compose exec airflow-scheduler airflow connections get dw_postgres
 ```
