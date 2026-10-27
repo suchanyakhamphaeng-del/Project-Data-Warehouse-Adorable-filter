@@ -218,7 +218,7 @@ execution_config = ExecutionConfig(dbt_executable_path=DBT_BIN)
 
 render_config = RenderConfig(
     load_method=LoadMode.DBT_LS,          # ใช้ `dbt ls` อ่าน dependency จริงของ project
-    dbt_deps=False,                       # project ยังไม่มี packages.yml (ต้องตรงกับ install_deps: False)
+    dbt_deps=True,                        # ติดตั้ง packages จาก packages.yml อัตโนมัติ
     test_behavior=TestBehavior.AFTER_EACH,  # แต่ละ model รัน test ของตัวเองต่อท้าย
     # test ที่อ้างหลาย model (เช่น relationships stg_orders -> stg_stores)
     # แยกเป็น task ของตัวเอง รอให้ parent ทุกตัวสร้างเสร็จก่อน
@@ -266,7 +266,7 @@ with DAG(
         execution_config=execution_config,
         render_config=render_config,
         operator_args={
-            "install_deps": False,  # project ยังไม่มี packages.yml
+            "install_deps": True,  # ติดตั้ง dependencies จาก packages.yml อัตโนมัติ (ตรงกับ dbt_deps ใน RenderConfig)
             # ไม่ใช้ Airflow Datasets (ปิด alias ด้วย env
             # AIRFLOW__COSMOS__ENABLE_DATASET_ALIAS ใน docker-compose.yml ด้วย)
             "emit_datasets": False,
