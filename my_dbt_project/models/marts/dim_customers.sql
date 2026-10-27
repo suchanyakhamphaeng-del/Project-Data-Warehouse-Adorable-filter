@@ -1,5 +1,5 @@
 SELECT 
     customer_id,
-    city AS customer_city,
+    customer_city,
     signup_date
-FROM {{ ref('customers') }}
+FROM {{ ref('stg_customers') }}

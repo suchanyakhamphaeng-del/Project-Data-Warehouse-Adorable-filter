@@ -32,5 +32,6 @@ models:
       +materialized: view
     marts:
       +materialized: table
+      +schema: marts   # ลง schema `marts` ตรง ๆ (ดู macros/generate_schema_name.sql)
     # +materialized: view
 
