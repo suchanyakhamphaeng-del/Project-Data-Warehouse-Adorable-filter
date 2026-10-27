@@ -218,6 +218,7 @@ execution_config = ExecutionConfig(dbt_executable_path=DBT_BIN)
 
 render_config = RenderConfig(
     load_method=LoadMode.DBT_LS,          # ใช้ `dbt ls` อ่าน dependency จริงของ project
+    dbt_deps=False,                       # project ยังไม่มี packages.yml (ต้องตรงกับ install_deps: False)
     test_behavior=TestBehavior.AFTER_EACH,  # แต่ละ model รัน test ของตัวเองต่อท้าย
     # test ที่อ้างหลาย model (เช่น relationships stg_orders -> stg_stores)
     # แยกเป็น task ของตัวเอง รอให้ parent ทุกตัวสร้างเสร็จก่อน
